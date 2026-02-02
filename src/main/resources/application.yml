@@ -1,0 +1,14 @@
+server:
+  port: 8080
+
+bot:
+  slack:
+    botToken: ${SLACK_BOT_TOKEN}
+    clientSecret: ${SLACK_BOT_CLIENT_SECRET}
+    signingSecret: ${SLACK_BOT_SIGN_SECRET}
+  jira:
+    baseUrl: ${BASE_URL}
+    email: ${EMAIL}
+    apiToken: ${API_TOKEN}
+    progressFieldId: ${FIELD_ID}
+
