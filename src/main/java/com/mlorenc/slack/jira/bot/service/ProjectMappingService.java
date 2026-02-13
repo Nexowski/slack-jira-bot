@@ -4,6 +4,8 @@ import com.mlorenc.slack.jira.bot.model.ProjectFieldMapping;
 import com.mlorenc.slack.jira.bot.repository.ProjectFieldMappingRepository;
 import org.springframework.stereotype.Service;
 
+import java.util.Optional;
+
 @Service
 public class ProjectMappingService {
 
@@ -20,5 +22,10 @@ public class ProjectMappingService {
         mapping.setJiraProjectKey(projectKey.toUpperCase());
         mapping.setProgressFieldId(progressFieldId);
         repository.save(mapping);
+    }
+
+    public Optional<String> getProgressField(String slackUserId, String projectKey) {
+        return repository.findBySlackUserIdAndJiraProjectKey(slackUserId, projectKey.toUpperCase())
+                .map(ProjectFieldMapping::getProgressFieldId);
     }
 }

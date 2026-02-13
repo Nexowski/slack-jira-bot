@@ -1,94 +1,136 @@
 # Slack Jira Bot
 
-A Spring Boot app that handles a Slack `/progress` command and updates Jira Cloud issues.
+Spring Boot bot that connects Slack users to Jira Cloud with Atlassian OAuth 2.0 (3LO), and lets each Slack user map Jira project keys to progress custom fields.
+
+## What this bot does
+
+- Exposes Slack endpoints for slash commands and interactivity.
+- Supports `/jira connect` to connect a Slack user to Jira via OAuth.
+- Supports `/jira map` to save a per-user mapping:
+  - Jira project key (for example `ABC`)
+  - Jira progress custom field id (for example `customfield_10042`)
 
 ## Prerequisites
 
 - Java 21
-- A Slack app with slash commands/interactivity enabled
-- A Jira Cloud site, user email, and Jira API token
+- A Slack workspace where you can install apps
+- A Jira Cloud site + Atlassian account with permission to create OAuth apps
+- A public HTTPS URL for local development (for example ngrok)
 
-## 1) How to configure the app to run
+---
 
-### Environment variables
+## 1) Create and configure the Atlassian OAuth app (Jira)
 
-This project reads all runtime configuration from environment variables via `application.yml`:
+This service uses Atlassian OAuth 2.0 authorization code flow (3LO).
 
-- `SLACK_BOT_TOKEN`
-- `SLACK_BOT_CLIENT_SECRET`
-- `SLACK_BOT_SIGN_SECRET`
-- `BASE_URL` (your Jira base URL, for example `https://your-domain.atlassian.net`)
-- `EMAIL` (Jira account email)
-- `API_TOKEN` (Jira API token)
-- `FIELD_ID` (Jira custom field id used for progress, for example `customfield_12345`)
+1. Open Atlassian Developer Console.
+2. Create a new OAuth 2.0 (3LO) app.
+3. In app permissions/scopes, add at least:
+   - `read:jira-user`
+   - `read:jira-work`
+   - `write:jira-work`
+   - `offline_access`
+4. Configure callback URL(s):
+   - Local default: `http://localhost:8080/jira/oauth2/callback`
+   - If using ngrok, also add: `https://<your-public-url>/jira/oauth2/callback`
+5. Copy the app credentials:
+   - Client ID -> `JIRA_CLIENT_ID`
+   - Client secret -> `JIRA_CLIENT_SECRET`
 
-Example:
+> Important: `JIRA_REDIRECT_URI` in your environment must exactly match one callback URL configured in Atlassian.
+
+---
+
+## 2) Create and configure the Slack app
+
+1. Go to [api.slack.com/apps](https://api.slack.com/apps) and create an app.
+2. Under **OAuth & Permissions**, add bot token scopes:
+   - `commands`
+   - `chat:write`
+3. Install the app to your workspace and copy **Bot User OAuth Token** -> `SLACK_BOT_TOKEN`.
+4. Under **Basic Information**, copy **Signing Secret** -> `SLACK_BOT_SIGN_SECRET`.
+5. Add a Slash Command:
+   - Command: `/jira`
+   - Request URL: `https://<your-public-url>/slack/commands`
+   - Short description/example: `connect` or `map`
+6. Under **Interactivity & Shortcuts**, enable interactivity:
+   - Request URL: `https://<your-public-url>/slack/interactions`
+
+### Supported slash commands
+
+- `/jira connect` -> opens a modal with a button to start Atlassian OAuth.
+- `/jira map` -> opens a modal to save `projectKey` -> `progressFieldId` mapping.
+
+---
+
+## 3) Configure environment variables
+
+Set these before running the app:
 
 ```bash
 export SLACK_BOT_TOKEN='xoxb-...'
-export SLACK_BOT_CLIENT_SECRET='...'
 export SLACK_BOT_SIGN_SECRET='...'
-export BASE_URL='https://your-domain.atlassian.net'
-export EMAIL='you@company.com'
-export API_TOKEN='...'
-export FIELD_ID='customfield_12345'
+
+export JIRA_CLIENT_ID='...'
+export JIRA_CLIENT_SECRET='...'
+export JIRA_REDIRECT_URI='http://localhost:8080/jira/oauth2/callback'
+
+# Optional: override only if you need non-default Atlassian endpoints/scopes
+# export JIRA_SCOPES='read:jira-user read:jira-work write:jira-work offline_access'
+# export JIRA_AUTHORIZE_URL='https://auth.atlassian.com/authorize'
+# export JIRA_TOKEN_URL='https://auth.atlassian.com/oauth/token'
+# export JIRA_RESOURCES_URL='https://api.atlassian.com/oauth/token/accessible-resources'
+
+# 32-byte key in base64 for token encryption at rest
+export TOKEN_ENCRYPTION_KEY='MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY='
 ```
 
-### Run locally
+Notes:
+- H2 database is file-based by default at `./data/bot`.
+- If you do not set variables, `application.yml` fallback defaults are used (not suitable for production).
+
+---
+
+## 4) Run locally
 
 ```bash
 ./gradlew bootRun
 ```
 
-The app starts on port `8080` by default.
+App runs on `http://localhost:8080` by default.
 
-### Slack request URLs
+---
 
-Expose your local app (for example with ngrok) and configure Slack to call:
+## 5) Expose local app to Slack/Atlassian
 
-- Slash command request URL: `https://<public-url>/slack/commands`
-- Interactivity request URL: `https://<public-url>/slack/interactions`
+Example with ngrok:
 
-## 2) How to connect it to Jira Cloud
-
-### Step A: Create a Jira API token
-
-1. Sign in to Atlassian account settings.
-2. Create an API token.
-3. Set it in `API_TOKEN`.
-
-Authentication used by the bot is Jira Cloud Basic Auth with:
-
-- Username: `EMAIL`
-- Password: `API_TOKEN`
-
-### Step B: Set Jira base URL and account email
-
-- Set `BASE_URL` to your Jira Cloud site URL (for example `https://your-domain.atlassian.net`).
-- Set `EMAIL` to the Jira account email that owns the API token.
-
-### Step C: Find and set the progress custom field id
-
-The bot writes progress using the configured Jira field id (`FIELD_ID`).
-
-- The value must be the Jira field key (for example `customfield_12345`).
-- The field should be a numeric field compatible with values `0..100`.
-
-### Step D: Validate with a Slack command
-
-From Slack, run:
-
-```text
-/progress ABC-123 35
+```bash
+ngrok http 8080
 ```
 
-The bot will:
+Take the HTTPS URL ngrok gives you (for example `https://abc123.ngrok-free.app`) and update:
 
-- update the configured Jira field to `35`
-- add a comment to the issue with Slack user and progress details
+- Slack slash command request URL -> `https://abc123.ngrok-free.app/slack/commands`
+- Slack interactivity URL -> `https://abc123.ngrok-free.app/slack/interactions`
+- Atlassian OAuth callback URL + `JIRA_REDIRECT_URI` -> `https://abc123.ngrok-free.app/jira/oauth2/callback`
 
-You can also open the modal by running:
+---
 
-```text
-/progress
-```
+## 6) End-to-end smoke test
+
+1. In Slack, run:
+   - `/jira connect`
+2. In modal, click **Connect Jira**.
+3. Complete Atlassian consent in browser.
+4. Verify callback success page: `Jira connection completed. You can close this window.`
+5. In Slack, run:
+   - `/jira map`
+6. Save mapping values, for example:
+   - Project key: `ABC`
+   - Progress field id: `customfield_10042`
+
+If callbacks fail, verify:
+- Slack request URLs are reachable publicly over HTTPS.
+- `JIRA_REDIRECT_URI` exactly matches Atlassian callback configuration.
+- Slack signing secret/token are from the same installed app.

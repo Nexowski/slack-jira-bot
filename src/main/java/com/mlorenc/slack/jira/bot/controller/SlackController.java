@@ -5,7 +5,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.mlorenc.slack.jira.bot.config.BotProperties;
 import com.mlorenc.slack.jira.bot.core.SlackService;
 import com.mlorenc.slack.jira.bot.core.SlackSignatureVerifier;
+import com.mlorenc.slack.jira.bot.service.JiraFieldService;
 import com.mlorenc.slack.jira.bot.service.JiraOAuthService;
+import com.mlorenc.slack.jira.bot.service.MlJiraUpdateService;
 import com.mlorenc.slack.jira.bot.service.ProjectMappingService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -15,6 +17,7 @@ import org.springframework.web.bind.annotation.*;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
@@ -27,19 +30,25 @@ public class SlackController {
     private final SlackSignatureVerifier verifier;
     private final SlackService slackService;
     private final JiraOAuthService jiraOAuthService;
+    private final JiraFieldService jiraFieldService;
     private final ProjectMappingService projectMappingService;
+    private final MlJiraUpdateService mlJiraUpdateService;
     private final BotProperties properties;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public SlackController(SlackSignatureVerifier verifier,
                            SlackService slackService,
                            JiraOAuthService jiraOAuthService,
+                           JiraFieldService jiraFieldService,
                            ProjectMappingService projectMappingService,
+                           MlJiraUpdateService mlJiraUpdateService,
                            BotProperties properties) {
         this.verifier = verifier;
         this.slackService = slackService;
         this.jiraOAuthService = jiraOAuthService;
+        this.jiraFieldService = jiraFieldService;
         this.projectMappingService = projectMappingService;
+        this.mlJiraUpdateService = mlJiraUpdateService;
         this.properties = properties;
     }
 
@@ -58,14 +67,14 @@ public class SlackController {
         String triggerId = form.getOrDefault("trigger_id", "");
         String slackUserId = form.getOrDefault("user_id", "");
 
-        if (!"/jira".equals(command)) {
-            return "{\"response_type\":\"ephemeral\",\"text\":\"Unknown command. Use /jira connect or /jira map.\"}";
+        if (!"/ml-jira".equals(command)) {
+            return jsonText("Unknown command. Use /ml-jira connect, /ml-jira map, or /ml-jira update ISSUE-KEY <value>.");
         }
 
         if ("connect".equalsIgnoreCase(text)) {
             String authorizeUrl = jiraOAuthService.createAuthorizationUrl(slackUserId);
             slackService.openConnectModal(properties.slack().botToken(), triggerId, authorizeUrl);
-            log.atInfo().addKeyValue("event", "slack.command.jira.connect").addKeyValue("slackUserId", slackUserId).log("Handled /jira connect");
+            log.atInfo().addKeyValue("event", "slack.command.mljira.connect").addKeyValue("slackUserId", slackUserId).log("Handled /ml-jira connect");
             return jsonText("Opening Jira connect modal...");
         }
 
@@ -74,7 +83,20 @@ public class SlackController {
             return jsonText("Opening project mapping modal...");
         }
 
-        return jsonText("Usage: /jira connect OR /jira map");
+        UpdateCommand updateCommand = parseUpdateCommand(text);
+        if (updateCommand != null) {
+            return jsonText(mlJiraUpdateService.handleUpdate(slackUserId, updateCommand.issueKey(), updateCommand.value()));
+        }
+
+        return jsonText("Usage: /ml-jira connect OR /ml-jira map OR /ml-jira update ISSUE-KEY <value>");
+    }
+
+    static UpdateCommand parseUpdateCommand(String text) {
+        String[] parts = text.trim().split("\\s+", 3);
+        if (parts.length < 3 || !"update".equalsIgnoreCase(parts[0])) {
+            return null;
+        }
+        return new UpdateCommand(parts[1], parts[2]);
     }
 
     @PostMapping(value = "/interactions", consumes = MediaType.APPLICATION_FORM_URLENCODED_VALUE)
@@ -88,6 +110,19 @@ public class SlackController {
 
         Map<String, String> form = parseForm(rawBody);
         JsonNode payload = objectMapper.readTree(form.get("payload"));
+
+        if ("block_suggestion".equals(payload.path("type").asText())
+                && "progress_field_block".equals(payload.path("block_id").asText())
+                && "progress_field_input".equals(payload.path("action_id").asText())) {
+            String slackUserId = payload.path("user").path("id").asText();
+            String query = payload.path("value").asText("");
+            List<Map<String, Object>> options = jiraFieldService.searchFields(slackUserId, query).stream()
+                    .map(option -> Map.<String, Object>of(
+                            "text", Map.of("type", "plain_text", "text", option.name()),
+                            "value", option.id()))
+                    .toList();
+            return objectMapper.writeValueAsString(Map.of("options", options));
+        }
 
         if ("view_submission".equals(payload.path("type").asText())
                 && "jira_mapping_submit".equals(payload.path("view").path("callback_id").asText())) {
@@ -103,7 +138,11 @@ public class SlackController {
     }
 
     private static String jsonText(String text) {
-        return "{\"response_type\":\"ephemeral\",\"text\":\"" + text + "\"}";
+        return "{\"response_type\":\"ephemeral\",\"text\":" + quoteJson(text) + "}";
+    }
+
+    private static String quoteJson(String text) {
+        return "\"" + text.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n") + "\"";
     }
 
     private static Map<String, String> parseForm(String rawBody) {
@@ -118,5 +157,8 @@ public class SlackController {
 
     private static String urlDecode(String s) {
         return URLDecoder.decode(s, StandardCharsets.UTF_8);
+    }
+
+    record UpdateCommand(String issueKey, String value) {
     }
 }
