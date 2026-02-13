@@ -17,61 +17,88 @@ public class SlackService {
     private final HttpClient http = HttpClient.newHttpClient();
     private final ObjectMapper om = new ObjectMapper();
 
-    public void openProgressModal(String botToken, String triggerId) throws Exception {
+    public void openConnectModal(String botToken, String triggerId, String authorizeUrl) throws Exception {
         String modalJson = """
         {
           "trigger_id": "%s",
           "view": {
             "type": "modal",
-            "callback_id": "progress_submit",
-            "title": { "type": "plain_text", "text": "Jira progress" },
-            "submit": { "type": "plain_text", "text": "Submit" },
+            "callback_id": "jira_connect_modal",
+            "title": { "type": "plain_text", "text": "Connect Jira" },
+            "close": { "type": "plain_text", "text": "Close" },
+            "blocks": [
+              {
+                "type": "section",
+                "text": {
+                  "type": "mrkdwn",
+                  "text": "Click to connect your Jira account using OAuth 3LO."
+                }
+              },
+              {
+                "type": "actions",
+                "elements": [
+                  {
+                    "type": "button",
+                    "text": { "type": "plain_text", "text": "Connect Jira" },
+                    "url": %s,
+                    "action_id": "open_jira_oauth"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+        """.formatted(escapeJson(triggerId), om.writeValueAsString(authorizeUrl));
+
+        sendViewsOpen(botToken, modalJson);
+    }
+
+    public void openProjectMappingModal(String botToken, String triggerId) throws Exception {
+        String modalJson = """
+        {
+          "trigger_id": "%s",
+          "view": {
+            "type": "modal",
+            "callback_id": "jira_mapping_submit",
+            "title": { "type": "plain_text", "text": "Jira Field Mapping" },
+            "submit": { "type": "plain_text", "text": "Save" },
             "close": { "type": "plain_text", "text": "Cancel" },
             "blocks": [
               {
                 "type": "input",
-                "block_id": "issues_block",
-                "label": { "type": "plain_text", "text": "Jira issue keys" },
-                "element": { "type": "plain_text_input", "action_id": "issues_input", "placeholder": { "type": "plain_text", "text": "ABC-123, ABC-130" } }
+                "block_id": "project_block",
+                "label": { "type": "plain_text", "text": "Project key" },
+                "element": { "type": "plain_text_input", "action_id": "project_input", "placeholder": { "type": "plain_text", "text": "ABC" } }
               },
               {
                 "type": "input",
-                "block_id": "percent_block",
-                "label": { "type": "plain_text", "text": "%% complete" },
-                "element": { "type": "plain_text_input", "action_id": "percent_input", "placeholder": { "type": "plain_text", "text": "0-100" } }
-              },
-              {
-                "type": "input",
-                "block_id": "blocked_block",
-                "optional": true,
-                "label": { "type": "plain_text", "text": "Blocked? (optional)" },
-                "element": {
-                  "type": "static_select",
-                  "action_id": "blocked_select",
-                  "options": [
-                    { "text": { "type": "plain_text", "text": "No" }, "value": "no" },
-                    { "text": { "type": "plain_text", "text": "Yes" }, "value": "yes" }
-                  ]
-                }
-              },
-              {
-                "type": "input",
-                "block_id": "note_block",
-                "optional": true,
-                "label": { "type": "plain_text", "text": "Note (optional)" },
-                "element": { "type": "plain_text_input", "action_id": "note_input", "multiline": true }
+                "block_id": "progress_field_block",
+                "label": { "type": "plain_text", "text": "Progress field id" },
+                "element": { "type": "plain_text_input", "action_id": "progress_field_input", "placeholder": { "type": "plain_text", "text": "customfield_10042" } }
               }
             ]
           }
         }
         """.formatted(escapeJson(triggerId));
 
+        sendViewsOpen(botToken, modalJson);
+    }
+
+    public MappingSubmission parseMappingSubmission(JsonNode payload) {
+        String slackUserId = payload.path("user").path("id").asText();
+        JsonNode values = payload.path("view").path("state").path("values");
+        String projectKey = values.path("project_block").path("project_input").path("value").asText("");
+        String progressFieldId = values.path("progress_field_block").path("progress_field_input").path("value").asText("");
+        return new MappingSubmission(slackUserId, projectKey, progressFieldId);
+    }
+
+    private void sendViewsOpen(String botToken, String payload) throws Exception {
         HttpRequest req = HttpRequest.newBuilder()
                 .uri(URI.create("https://slack.com/api/views.open"))
                 .timeout(Duration.ofSeconds(20))
                 .header("Authorization", "Bearer " + botToken)
                 .header("Content-Type", "application/json; charset=utf-8")
-                .POST(HttpRequest.BodyPublishers.ofString(modalJson, StandardCharsets.UTF_8))
+                .POST(HttpRequest.BodyPublishers.ofString(payload, StandardCharsets.UTF_8))
                 .build();
 
         HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
@@ -81,62 +108,10 @@ public class SlackService {
         }
     }
 
-    /**
-     * Update the slash-command ephemeral message using Slack response_url.
-     * This avoids needing channel IDs and avoids Slack timeouts.
-     */
-    public void updateResponseUrl(String responseUrl, String text) throws Exception {
-        // Slack expects JSON body like {"text":"...","replace_original":true}
-        String payload = """
-        {
-          "replace_original": true,
-          "text": %s
-        }
-        """.formatted(om.writeValueAsString(text));
-
-        HttpRequest req = HttpRequest.newBuilder()
-                .uri(URI.create(responseUrl))
-                .timeout(Duration.ofSeconds(20))
-                .header("Content-Type", "application/json; charset=utf-8")
-                .POST(HttpRequest.BodyPublishers.ofString(payload, StandardCharsets.UTF_8))
-                .build();
-
-        HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
-        if (resp.statusCode() < 200 || resp.statusCode() >= 300) {
-            throw new RuntimeException("Slack response_url update failed: " + resp.statusCode() + " " + resp.body());
-        }
-    }
-
-    public record ProgressSubmission(String slackUserId, String issueKeysRaw, int percent, boolean blocked, String note) {}
-
-    public ProgressSubmission parseSubmission(JsonNode payload) {
-        String slackUserId = payload.path("user").path("id").asText();
-
-        JsonNode values = payload.path("view").path("state").path("values");
-        String issues = values.path("issues_block").path("issues_input").path("value").asText("");
-        String percentStr = values.path("percent_block").path("percent_input").path("value").asText("");
-        int percent = safePercent(percentStr);
-
-        String blockedVal = values.path("blocked_block").path("blocked_select").path("selected_option").path("value").asText("no");
-        boolean blocked = "yes".equalsIgnoreCase(blockedVal);
-
-        String note = values.path("note_block").path("note_input").path("value").asText("");
-
-        return new ProgressSubmission(slackUserId, issues, percent, blocked, note);
-    }
-
-    private static int safePercent(String s) {
-        try {
-            int v = (int) Math.round(Double.parseDouble(s.trim()));
-            if (v < 0) return 0;
-            if (v > 100) return 100;
-            return v;
-        } catch (Exception e) {
-            return 0;
-        }
-    }
-
     private static String escapeJson(String s) {
         return s.replace("\\", "\\\\").replace("\"", "\\\"");
+    }
+
+    public record MappingSubmission(String slackUserId, String projectKey, String progressFieldId) {
     }
 }
