@@ -19,6 +19,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 @RestController
@@ -67,25 +68,41 @@ public class SlackController {
         String triggerId = form.getOrDefault("trigger_id", "");
         String slackUserId = form.getOrDefault("user_id", "");
 
-        if (!"/ml-jira".equals(command)) {
-            return jsonText("Unknown command. Use /ml-jira connect, /ml-jira map, or /ml-jira update ISSUE-KEY <value>.");
+        if (!"/jira".equals(command) && !"/ml-jira".equals(command)) {
+            return "{\"response_type\":\"ephemeral\",\"text\":\"Unknown command. Use /ml-jira connect, /ml-jira reconnect, or /ml-jira map.\"}";
         }
 
         if ("connect".equalsIgnoreCase(text)) {
+            Optional<String> jiraCloudId = jiraOAuthService.findConnectedJiraCloudId(slackUserId);
+            if (jiraCloudId.isPresent()) {
+                log.atInfo()
+                        .addKeyValue("event", "slack.command.ml-jira.connect.already_connected")
+                        .addKeyValue("slackUserId", slackUserId)
+                        .addKeyValue("jiraCloudId", jiraCloudId.get())
+                        .log("Skipped OAuth flow because user is already connected");
+                return jsonText("✅ Already connected. Use /ml-jira reconnect to re-authorize.");
+            }
+
             String authorizeUrl = jiraOAuthService.createAuthorizationUrl(slackUserId);
             slackService.openConnectModal(properties.slack().botToken(), triggerId, authorizeUrl);
-            log.atInfo().addKeyValue("event", "slack.command.mljira.connect").addKeyValue("slackUserId", slackUserId).log("Handled /ml-jira connect");
+            log.atInfo().addKeyValue("event", "slack.command.ml-jira.connect")
+                    .addKeyValue("slackUserId", slackUserId)
+                    .log("Handled /ml-jira connect");
             return jsonText("Opening Jira connect modal...");
+        }
+
+        if ("reconnect".equalsIgnoreCase(text)) {
+            String authorizeUrl = jiraOAuthService.createAuthorizationUrl(slackUserId);
+            slackService.openConnectModal(properties.slack().botToken(), triggerId, authorizeUrl);
+            log.atInfo().addKeyValue("event", "slack.command.ml-jira.reconnect")
+                    .addKeyValue("slackUserId", slackUserId)
+                    .log("Handled /ml-jira reconnect");
+            return jsonText("Opening Jira reconnect modal...");
         }
 
         if ("map".equalsIgnoreCase(text)) {
             slackService.openProjectMappingModal(properties.slack().botToken(), triggerId);
             return jsonText("Opening project mapping modal...");
-        }
-
-        UpdateCommand updateCommand = parseUpdateCommand(text);
-        if (updateCommand != null) {
-            return jsonText(mlJiraUpdateService.handleUpdate(slackUserId, updateCommand.issueKey(), updateCommand.value()));
         }
 
         return jsonText("Usage: /ml-jira connect OR /ml-jira map OR /ml-jira update ISSUE-KEY <value>");

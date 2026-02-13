@@ -19,6 +19,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 @Service
@@ -66,12 +67,16 @@ public class JiraOAuthService {
     }
 
     @Transactional
-    public void handleCallback(String code, String stateValue) {
+    public CallbackResult handleCallback(String code, String stateValue) {
         OAuthState state = stateRepository.findById(stateValue)
                 .orElseThrow(() -> new IllegalArgumentException("Invalid OAuth state"));
         if (state.getExpiresAt().isBefore(Instant.now())) {
             throw new IllegalArgumentException("OAuth state expired");
         }
+
+        String priorCloudId = userConnectionRepository.findBySlackUserId(state.getSlackUserId())
+                .map(UserConnection::getJiraCloudId)
+                .orElse(null);
 
         TokenResponse tokenResponse = exchangeCode(code);
         saveOrUpdateToken(state.getSlackUserId(), tokenResponse);
@@ -86,7 +91,33 @@ public class JiraOAuthService {
         userConnectionRepository.save(connection);
 
         stateRepository.delete(state);
-        log.atInfo().addKeyValue("event", "jira.oauth.connected").addKeyValue("slackUserId", state.getSlackUserId()).addKeyValue("jiraCloudId", resource.id()).log("Connected Slack user to Jira");
+        boolean reconnect = priorCloudId != null;
+
+        log.atInfo().addKeyValue("event", reconnect ? "jira.oauth.reconnected" : "jira.oauth.connected")
+                .addKeyValue("slackUserId", state.getSlackUserId())
+                .addKeyValue("jiraCloudId", resource.id())
+                .log(reconnect ? "Reconnected Slack user to Jira" : "Connected Slack user to Jira");
+
+        return new CallbackResult(state.getSlackUserId(), resource.id(), reconnect);
+    }
+
+
+    @Transactional
+    public Optional<String> findConnectedJiraCloudId(String slackUserId) {
+        return userConnectionRepository.findBySlackUserId(slackUserId)
+                .map(UserConnection::getJiraCloudId)
+                .filter(cloudId -> {
+                    try {
+                        getValidAccessToken(slackUserId);
+                        return true;
+                    } catch (RuntimeException ex) {
+                        log.atInfo().addKeyValue("event", "jira.oauth.connection.invalid")
+                                .addKeyValue("slackUserId", slackUserId)
+                                .addKeyValue("jiraCloudId", cloudId)
+                                .log("Existing Jira connection is no longer valid", ex);
+                        return false;
+                    }
+                });
     }
 
     @Transactional
@@ -174,6 +205,7 @@ public class JiraOAuthService {
         return URLEncoder.encode(value, StandardCharsets.UTF_8);
     }
 
+    public record CallbackResult(String slackUserId, String jiraCloudId, boolean reconnect) {}
     record TokenResponse(String accessToken, String refreshToken, long expiresIn) {}
     record CloudResource(String id) {}
 }

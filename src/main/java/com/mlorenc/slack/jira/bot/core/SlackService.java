@@ -89,6 +89,31 @@ public class SlackService {
         sendViewsOpen(botToken, modalJson);
     }
 
+
+    public void sendEphemeralMessage(String botToken, String channelId, String userId, String text) throws Exception {
+        String payload = """
+        {
+          "channel": %s,
+          "user": %s,
+          "text": %s
+        }
+        """.formatted(om.writeValueAsString(channelId), om.writeValueAsString(userId), om.writeValueAsString(text));
+
+        HttpRequest req = HttpRequest.newBuilder()
+                .uri(URI.create("https://slack.com/api/chat.postEphemeral"))
+                .timeout(Duration.ofSeconds(20))
+                .header("Authorization", "Bearer " + botToken)
+                .header("Content-Type", "application/json; charset=utf-8")
+                .POST(HttpRequest.BodyPublishers.ofString(payload, StandardCharsets.UTF_8))
+                .build();
+
+        HttpResponse<String> resp = http.send(req, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        JsonNode body = om.readTree(resp.body());
+        if (!body.path("ok").asBoolean(false)) {
+            throw new RuntimeException("Slack chat.postEphemeral failed: " + resp.body());
+        }
+    }
+
     public MappingSubmission parseMappingSubmission(JsonNode payload) {
         String slackUserId = payload.path("user").path("id").asText();
         JsonNode values = payload.path("view").path("state").path("values");
