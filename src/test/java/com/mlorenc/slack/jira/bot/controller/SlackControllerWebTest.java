@@ -127,7 +127,7 @@ class SlackControllerWebTest {
                 .andExpect(status().isOk())
                 .andExpect(content().string(org.hamcrest.Matchers.containsString("Saved field mapping")));
 
-        verify(projectMappingService).saveMapping("U1", "ABC", "customfield_1");
+        verify(projectMappingService).saveMapping("U1", "ABC", "customfield_1", "", List.of());
     }
 
     @Test
@@ -158,7 +158,7 @@ class SlackControllerWebTest {
         when(jiraOAuthService.getValidAccessToken("U1")).thenReturn("token");
         when(jiraIssueClient.fetchIssueProjectKey("cloud-1", "token", "ABC-1")).thenReturn("ABC");
         when(projectMappingService.getProgressField("U1", "ABC")).thenReturn(Optional.empty());
-        when(jiraFieldService.fetchAllFields("U1")).thenReturn(List.of(new JiraFieldService.FieldOption("customfield_1", "Progress")));
+        when(jiraFieldService.fetchAllFields("U1")).thenReturn(List.of(new JiraFieldService.FieldOption("customfield_1", "Progress", "", List.of())));
 
         mockMvc.perform(post("/slack/commands")
                         .header("X-Slack-Request-Timestamp", "1")

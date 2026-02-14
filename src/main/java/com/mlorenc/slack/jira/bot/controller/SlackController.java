@@ -105,7 +105,7 @@ public class SlackController {
 
         MapFieldCommand mapFieldCommand = parseMapFieldCommand(text);
         if (mapFieldCommand != null) {
-            projectMappingService.saveMapping(slackUserId, mapFieldCommand.projectKey(), mapFieldCommand.fieldId());
+            projectMappingService.saveMapping(slackUserId, mapFieldCommand.projectKey(), mapFieldCommand.fieldId(), "", List.of());
             return jsonText("Saved field mapping for project " + mapFieldCommand.projectKey().toUpperCase() + ".");
         }
 
