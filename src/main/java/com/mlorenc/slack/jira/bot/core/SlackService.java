@@ -78,7 +78,7 @@ public class SlackService {
                   "type": "external_select",
                   "action_id": "progress_field_input",
                   "min_query_length": 0,
-                  "placeholder": { "type": "plain_text", "text": "Search Jira field" }
+                  "placeholder": { "type": "plain_text", "text": "Search Jira fields" }
                 }
               }
             ]
@@ -118,11 +118,9 @@ public class SlackService {
         String slackUserId = payload.path("user").path("id").asText();
         JsonNode values = payload.path("view").path("state").path("values");
         String projectKey = values.path("project_block").path("project_input").path("value").asText("");
-        JsonNode progressFieldInput = values.path("progress_field_block").path("progress_field_input");
-        String progressFieldId = progressFieldInput.path("selected_option").path("value").asText("");
-        if (progressFieldId.isBlank()) {
-            progressFieldId = progressFieldInput.path("value").asText("");
-        }
+        JsonNode progressFieldNode = values.path("progress_field_block").path("progress_field_input");
+        String progressFieldId = progressFieldNode.path("selected_option").path("value").asText(
+                progressFieldNode.path("value").asText(""));
         return new MappingSubmission(slackUserId, projectKey, progressFieldId);
     }
 

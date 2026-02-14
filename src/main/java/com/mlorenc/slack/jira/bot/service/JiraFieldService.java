@@ -2,16 +2,15 @@ package com.mlorenc.slack.jira.bot.service;
 
 import com.mlorenc.slack.jira.bot.model.UserConnection;
 import com.mlorenc.slack.jira.bot.repository.UserConnectionRepository;
-import org.springframework.cache.annotation.Cacheable;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -31,33 +30,31 @@ public class JiraFieldService {
         this.restTemplate = restTemplate;
     }
 
-    public List<JiraFieldOption> searchFields(String slackUserId, String query) {
-        String queryText = query == null ? "" : query.trim().toLowerCase(Locale.ROOT);
+    public List<FieldOption> searchFields(String slackUserId, String query) {
+        String normalizedQuery = query == null ? "" : query.toLowerCase(Locale.ROOT);
         return fetchAllFields(slackUserId).stream()
-                .filter(field -> field.id().startsWith("customfield_"))
-                .filter(field -> queryText.isEmpty()
-                        || field.id().toLowerCase(Locale.ROOT).contains(queryText)
-                        || field.name().toLowerCase(Locale.ROOT).contains(queryText))
-                .sorted(Comparator.comparing(JiraFieldOption::name, String.CASE_INSENSITIVE_ORDER))
+                .filter(field -> normalizedQuery.isBlank()
+                        || field.name().toLowerCase(Locale.ROOT).contains(normalizedQuery)
+                        || field.id().toLowerCase(Locale.ROOT).contains(normalizedQuery))
                 .limit(100)
                 .toList();
     }
 
-    @Cacheable(cacheNames = "jiraFields", key = "#slackUserId")
-    public List<JiraFieldOption> fetchAllFields(String slackUserId) {
-        UserConnection connection = userConnectionRepository.findBySlackUserId(slackUserId)
-                .orElseThrow(() -> new IllegalArgumentException("Jira account not connected for user"));
-
+    public List<FieldOption> fetchAllFields(String slackUserId) {
         String accessToken = jiraOAuthService.getValidAccessToken(slackUserId);
-        String url = "https://api.atlassian.com/ex/jira/%s/rest/api/3/field".formatted(connection.getJiraCloudId());
+        UserConnection connection = userConnectionRepository.findBySlackUserId(slackUserId)
+                .orElseThrow(() -> new IllegalArgumentException("No Jira connection for user"));
+
+        String endpoint = "https://api.atlassian.com/ex/jira/%s/rest/api/3/field".formatted(connection.getJiraCloudId());
 
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(accessToken);
+        headers.setAccept(List.of(MediaType.APPLICATION_JSON));
 
         ResponseEntity<List> response = restTemplate.exchange(
-                url,
+                endpoint,
                 HttpMethod.GET,
-                new HttpEntity<>(headers),
+                new HttpEntity<>(null, headers),
                 List.class);
 
         List<?> body = response.getBody();
@@ -65,21 +62,19 @@ public class JiraFieldService {
             return List.of();
         }
 
-        List<JiraFieldOption> fields = new ArrayList<>();
-        for (Object item : body) {
-            if (!(item instanceof Map<?, ?> map)) {
-                continue;
-            }
-            Object rawId = map.get("id");
-            String id = rawId == null ? "" : String.valueOf(rawId);
-            Object rawName = map.get("name");
-            String name = rawName == null ? id : String.valueOf(rawName);
-            if (!id.isBlank()) {
-                fields.add(new JiraFieldOption(id, name));
+        List<FieldOption> fields = new ArrayList<>();
+        for (Object entry : body) {
+            if (entry instanceof Map<?, ?> map) {
+                Object id = map.get("id");
+                Object name = map.get("name");
+                if (id != null && name != null) {
+                    fields.add(new FieldOption(String.valueOf(id), String.valueOf(name)));
+                }
             }
         }
         return fields;
     }
 
-    public record JiraFieldOption(String id, String name) {}
+    public record FieldOption(String id, String name) {
+    }
 }

@@ -136,6 +136,20 @@ public class JiraOAuthService {
         return refreshed.accessToken();
     }
 
+
+    @Transactional(readOnly = true)
+    public boolean isConnectedAndTokenValid(String slackUserId) {
+        if (userConnectionRepository.findBySlackUserId(slackUserId).isEmpty()) {
+            return false;
+        }
+        try {
+            String token = getValidAccessToken(slackUserId);
+            return token != null && !token.isBlank();
+        } catch (Exception ex) {
+            return false;
+        }
+    }
+
     private void saveOrUpdateToken(String slackUserId, TokenResponse tokenResponse) {
         JiraOAuthToken token = tokenRepository.findBySlackUserId(slackUserId)
                 .orElseGet(JiraOAuthToken::new);

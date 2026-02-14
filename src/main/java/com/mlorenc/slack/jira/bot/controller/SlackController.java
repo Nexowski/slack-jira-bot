@@ -7,7 +7,6 @@ import com.mlorenc.slack.jira.bot.core.SlackService;
 import com.mlorenc.slack.jira.bot.core.SlackSignatureVerifier;
 import com.mlorenc.slack.jira.bot.service.JiraFieldService;
 import com.mlorenc.slack.jira.bot.service.JiraOAuthService;
-import com.mlorenc.slack.jira.bot.service.MlJiraUpdateService;
 import com.mlorenc.slack.jira.bot.service.ProjectMappingService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -19,7 +18,6 @@ import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.stream.Collectors;
 
 @RestController
@@ -31,25 +29,22 @@ public class SlackController {
     private final SlackSignatureVerifier verifier;
     private final SlackService slackService;
     private final JiraOAuthService jiraOAuthService;
-    private final JiraFieldService jiraFieldService;
     private final ProjectMappingService projectMappingService;
-    private final MlJiraUpdateService mlJiraUpdateService;
+    private final JiraFieldService jiraFieldService;
     private final BotProperties properties;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public SlackController(SlackSignatureVerifier verifier,
                            SlackService slackService,
                            JiraOAuthService jiraOAuthService,
-                           JiraFieldService jiraFieldService,
                            ProjectMappingService projectMappingService,
-                           MlJiraUpdateService mlJiraUpdateService,
+                           JiraFieldService jiraFieldService,
                            BotProperties properties) {
         this.verifier = verifier;
         this.slackService = slackService;
         this.jiraOAuthService = jiraOAuthService;
-        this.jiraFieldService = jiraFieldService;
         this.projectMappingService = projectMappingService;
-        this.mlJiraUpdateService = mlJiraUpdateService;
+        this.jiraFieldService = jiraFieldService;
         this.properties = properties;
     }
 
@@ -73,30 +68,23 @@ public class SlackController {
         }
 
         if ("connect".equalsIgnoreCase(text)) {
-            Optional<String> jiraCloudId = jiraOAuthService.findConnectedJiraCloudId(slackUserId);
-            if (jiraCloudId.isPresent()) {
-                log.atInfo()
-                        .addKeyValue("event", "slack.command.ml-jira.connect.already_connected")
+            if (jiraOAuthService.isConnectedAndTokenValid(slackUserId)) {
+                log.atInfo().addKeyValue("event", "slack.command.jira.connect.already_connected")
                         .addKeyValue("slackUserId", slackUserId)
-                        .addKeyValue("jiraCloudId", jiraCloudId.get())
-                        .log("Skipped OAuth flow because user is already connected");
-                return jsonText("✅ Already connected. Use /ml-jira reconnect to re-authorize.");
+                        .log("Skipped Jira OAuth connect because user is already connected");
+                return jsonText("You're already connected to Jira.");
             }
 
             String authorizeUrl = jiraOAuthService.createAuthorizationUrl(slackUserId);
             slackService.openConnectModal(properties.slack().botToken(), triggerId, authorizeUrl);
-            log.atInfo().addKeyValue("event", "slack.command.ml-jira.connect")
-                    .addKeyValue("slackUserId", slackUserId)
-                    .log("Handled /ml-jira connect");
+            log.atInfo().addKeyValue("event", "slack.command.jira.connect").addKeyValue("slackUserId", slackUserId).log("Handled /jira connect");
             return jsonText("Opening Jira connect modal...");
         }
 
         if ("reconnect".equalsIgnoreCase(text)) {
             String authorizeUrl = jiraOAuthService.createAuthorizationUrl(slackUserId);
             slackService.openConnectModal(properties.slack().botToken(), triggerId, authorizeUrl);
-            log.atInfo().addKeyValue("event", "slack.command.ml-jira.reconnect")
-                    .addKeyValue("slackUserId", slackUserId)
-                    .log("Handled /ml-jira reconnect");
+            log.atInfo().addKeyValue("event", "slack.command.jira.reconnect").addKeyValue("slackUserId", slackUserId).log("Handled /jira reconnect");
             return jsonText("Opening Jira reconnect modal...");
         }
 
@@ -105,18 +93,10 @@ public class SlackController {
             return jsonText("Opening project mapping modal...");
         }
 
-        return jsonText("Usage: /ml-jira connect OR /ml-jira map OR /ml-jira update ISSUE-KEY <value>");
+        return jsonText("Usage: /ml-jira connect OR /ml-jira reconnect OR /ml-jira map");
     }
 
-    static UpdateCommand parseUpdateCommand(String text) {
-        String[] parts = text.trim().split("\\s+", 3);
-        if (parts.length < 3 || !"update".equalsIgnoreCase(parts[0])) {
-            return null;
-        }
-        return new UpdateCommand(parts[1], parts[2]);
-    }
-
-    @PostMapping(value = "/interactions", consumes = MediaType.APPLICATION_FORM_URLENCODED_VALUE)
+    @PostMapping(value = "/interactions", consumes = MediaType.APPLICATION_FORM_URLENCODED_VALUE, produces = MediaType.APPLICATION_JSON_VALUE)
     public String interactions(@RequestHeader("X-Slack-Request-Timestamp") String ts,
                                @RequestHeader("X-Slack-Signature") String sig,
                                @RequestBody String rawBody) throws Exception {
@@ -127,21 +107,24 @@ public class SlackController {
 
         Map<String, String> form = parseForm(rawBody);
         JsonNode payload = objectMapper.readTree(form.get("payload"));
+        String payloadType = payload.path("type").asText();
 
-        if ("block_suggestion".equals(payload.path("type").asText())
-                && "progress_field_block".equals(payload.path("block_id").asText())
-                && "progress_field_input".equals(payload.path("action_id").asText())) {
+        if ("block_suggestion".equals(payloadType)) {
             String slackUserId = payload.path("user").path("id").asText();
-            String query = payload.path("value").asText("");
-            List<Map<String, Object>> options = jiraFieldService.searchFields(slackUserId, query).stream()
-                    .map(option -> Map.<String, Object>of(
-                            "text", Map.of("type", "plain_text", "text", option.name()),
-                            "value", option.id()))
-                    .toList();
-            return objectMapper.writeValueAsString(Map.of("options", options));
+            String value = payload.path("value").asText("");
+            try {
+                List<JiraFieldService.FieldOption> fields = jiraFieldService.searchFields(slackUserId, value);
+                return optionsJson(fields);
+            } catch (Exception e) {
+                log.atWarn().setCause(e)
+                        .addKeyValue("event", "slack.interaction.field_suggest.error")
+                        .addKeyValue("slackUserId", slackUserId)
+                        .log("Failed to fetch Jira field suggestions for Slack interaction");
+                return "{\"options\":[]}";
+            }
         }
 
-        if ("view_submission".equals(payload.path("type").asText())
+        if ("view_submission".equals(payloadType)
                 && "jira_mapping_submit".equals(payload.path("view").path("callback_id").asText())) {
             SlackService.MappingSubmission submission = slackService.parseMappingSubmission(payload);
             projectMappingService.saveMapping(submission.slackUserId(), submission.projectKey(), submission.progressFieldId());
@@ -152,6 +135,15 @@ public class SlackController {
         }
 
         return "";
+    }
+
+    private String optionsJson(List<JiraFieldService.FieldOption> fields) throws Exception {
+        List<Map<String, Object>> options = fields.stream()
+                .map(field -> Map.<String, Object>of(
+                        "text", Map.of("type", "plain_text", "text", field.name()),
+                        "value", field.id()))
+                .toList();
+        return objectMapper.writeValueAsString(Map.of("options", options));
     }
 
     private static String jsonText(String text) {
