@@ -14,6 +14,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 
 @Service
 public class JiraFieldService {
@@ -38,6 +39,15 @@ public class JiraFieldService {
                         || field.id().toLowerCase(Locale.ROOT).contains(normalizedQuery))
                 .limit(100)
                 .toList();
+    }
+
+    public Optional<FieldOption> findFieldById(String slackUserId, String fieldId) {
+        if (fieldId == null || fieldId.isBlank()) {
+            return Optional.empty();
+        }
+        return fetchAllFields(slackUserId).stream()
+                .filter(field -> field.id().equals(fieldId))
+                .findFirst();
     }
 
     public List<FieldOption> fetchAllFields(String slackUserId) {
@@ -65,16 +75,61 @@ public class JiraFieldService {
         List<FieldOption> fields = new ArrayList<>();
         for (Object entry : body) {
             if (entry instanceof Map<?, ?> map) {
-                Object id = map.get("id");
-                Object name = map.get("name");
-                if (id != null && name != null) {
-                    fields.add(new FieldOption(String.valueOf(id), String.valueOf(name)));
+                FieldOption field = mapField(map);
+                if (field != null) {
+                    fields.add(field);
                 }
             }
         }
         return fields;
     }
 
-    public record FieldOption(String id, String name) {
+    private static FieldOption mapField(Map<?, ?> map) {
+        Object id = map.get("id");
+        Object name = map.get("name");
+        if (id == null || name == null) {
+            return null;
+        }
+
+        String schemaType = "";
+        Object schema = map.get("schema");
+        if (schema instanceof Map<?, ?> schemaMap) {
+            Object type = schemaMap.get("type");
+            if (type != null) {
+                schemaType = String.valueOf(type);
+            }
+        }
+
+        List<String> allowedValues = List.of();
+        Object rawAllowedValues = map.get("allowedValues");
+        if (rawAllowedValues instanceof List<?> rawList) {
+            allowedValues = rawList.stream()
+                    .map(JiraFieldService::coerceAllowedValue)
+                    .filter(value -> value != null && !value.isBlank())
+                    .toList();
+        }
+
+        return new FieldOption(String.valueOf(id), String.valueOf(name), schemaType, allowedValues);
+    }
+
+    private static String coerceAllowedValue(Object entry) {
+        if (entry instanceof Map<?, ?> optionMap) {
+            Object value = optionMap.get("value");
+            if (value != null) {
+                return String.valueOf(value);
+            }
+            Object name = optionMap.get("name");
+            if (name != null) {
+                return String.valueOf(name);
+            }
+            Object id = optionMap.get("id");
+            if (id != null) {
+                return String.valueOf(id);
+            }
+        }
+        return entry == null ? null : String.valueOf(entry);
+    }
+
+    public record FieldOption(String id, String name, String type, List<String> allowedValues) {
     }
 }

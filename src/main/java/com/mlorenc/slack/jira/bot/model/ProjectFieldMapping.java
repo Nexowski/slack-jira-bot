@@ -19,6 +19,11 @@ public class ProjectFieldMapping {
     @Column(nullable = false)
     private String progressFieldId;
 
+    private String progressFieldType;
+
+    @Lob
+    private String progressFieldAllowedValues;
+
     public Long getId() { return id; }
     public String getSlackUserId() { return slackUserId; }
     public void setSlackUserId(String slackUserId) { this.slackUserId = slackUserId; }
@@ -26,4 +31,8 @@ public class ProjectFieldMapping {
     public void setJiraProjectKey(String jiraProjectKey) { this.jiraProjectKey = jiraProjectKey; }
     public String getProgressFieldId() { return progressFieldId; }
     public void setProgressFieldId(String progressFieldId) { this.progressFieldId = progressFieldId; }
+    public String getProgressFieldType() { return progressFieldType; }
+    public void setProgressFieldType(String progressFieldType) { this.progressFieldType = progressFieldType; }
+    public String getProgressFieldAllowedValues() { return progressFieldAllowedValues; }
+    public void setProgressFieldAllowedValues(String progressFieldAllowedValues) { this.progressFieldAllowedValues = progressFieldAllowedValues; }
 }

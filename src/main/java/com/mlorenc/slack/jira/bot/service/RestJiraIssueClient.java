@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
 
@@ -58,6 +59,28 @@ public class RestJiraIssueClient implements JiraIssueClient {
         headers.setContentType(MediaType.APPLICATION_JSON);
 
         restTemplate.exchange(url, HttpMethod.PUT, new HttpEntity<>(payload, headers), Void.class);
+    }
+
+    @Override
+    public void logWork(String cloudId, String accessToken, String issueKey, String timeSpent, String comment) {
+        String url = jiraApiBase(cloudId) + "/rest/api/3/issue/" + issueKey + "/worklog";
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("timeSpent", timeSpent);
+        if (comment != null && !comment.isBlank()) {
+            payload.put("comment", Map.of(
+                    "type", "doc",
+                    "version", 1,
+                    "content", java.util.List.of(Map.of(
+                            "type", "paragraph",
+                            "content", java.util.List.of(Map.of("type", "text", "text", comment))
+                    ))
+            ));
+        }
+
+        HttpHeaders headers = authHeaders(accessToken);
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        restTemplate.exchange(url, HttpMethod.POST, new HttpEntity<>(payload, headers), Void.class);
     }
 
     private static String jiraApiBase(String cloudId) {

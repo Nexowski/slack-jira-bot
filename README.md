@@ -6,9 +6,12 @@ Spring Boot bot that connects Slack users to Jira Cloud with Atlassian OAuth 2.0
 
 - Exposes Slack endpoints for slash commands and interactivity.
 - Supports `/jira connect` to connect a Slack user to Jira via OAuth.
-- Supports `/jira map` to save a per-user mapping:
+- Supports `/jira map` to save a per-user mapping via modal:
   - Jira project key (for example `ABC`)
   - Jira progress custom field id (for example `customfield_10042`)
+- Supports `/jira map-field <PROJECT> <fieldId>` to map directly from a slash command.
+- Supports `/jira update <ISSUE-KEY> <value>` to update the mapped field for an issue.
+- Supports `/jira logwork <ISSUE-KEY> <timeSpent> [comment]` to add a Jira worklog entry (visible in Tempo).
 
 ## Prerequisites
 
@@ -60,6 +63,10 @@ This service uses Atlassian OAuth 2.0 authorization code flow (3LO).
 
 - `/jira connect` -> opens a modal with a button to start Atlassian OAuth.
 - `/jira map` -> opens a modal to save `projectKey` -> `progressFieldId` mapping.
+- `/jira map-field <PROJECT> <fieldId>` -> saves mapping directly from slash command.
+- `/jira update <ISSUE-KEY> <value>` -> updates the mapped field for the issue project.
+  - If no mapping exists, the bot responds with available Jira fields and suggests mapping command.
+- `/jira logwork <ISSUE-KEY> <timeSpent> [comment]` -> logs work time to Jira worklog (Tempo reads this).
 
 ---
 

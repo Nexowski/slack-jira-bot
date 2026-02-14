@@ -8,4 +8,6 @@ public interface JiraIssueClient {
     Optional<String> findFieldIdByName(String cloudId, String accessToken, String fieldName);
 
     void updateIssueField(String cloudId, String accessToken, String issueKey, String fieldId, String value);
+
+    void logWork(String cloudId, String accessToken, String issueKey, String timeSpent, String comment);
 }
