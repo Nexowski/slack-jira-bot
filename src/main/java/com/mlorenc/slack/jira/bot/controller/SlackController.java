@@ -100,6 +100,7 @@ public class SlackController {
     public String interactions(@RequestHeader("X-Slack-Request-Timestamp") String ts,
                                @RequestHeader("X-Slack-Signature") String sig,
                                @RequestBody String rawBody) throws Exception {
+        log.info("Slack interactions hit. rawBody startsWith={}", rawBody.substring(0, Math.min(rawBody.length(), 120)));
 
         if (!verifier.verify(properties.slack().signingSecret(), ts, sig, rawBody)) {
             return "";
